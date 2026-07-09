@@ -28,7 +28,6 @@ dependencies:
 
   # Audio
   file_picker: ^8.1.7
-  ffmpeg_kit_flutter_min_gpl: ^6.0.3
   record: ^5.2.0
 
   # Network
