@@ -52,13 +52,16 @@ jobs:
   windows-exe:
     name: Build Windows exe
     runs-on: windows-latest
-    timeout-minutes: 60
-    env:
-      CMAKE_GENERATOR: Visual Studio 17 2022
+    timeout-minutes: 120
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Install Visual Studio 2019 Build Tools
+        shell: pwsh
+        run: |
+          choco install visualstudio2019buildtools -y --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --includeOptional --passive --norestart"
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
