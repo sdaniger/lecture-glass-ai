@@ -37,8 +37,6 @@ dependencies:
   # Network
   dio: ^5.7.0
 
-  # Secure storage
-  flutter_secure_storage: ^4.2.1
 
   # Obsidian URI
   url_launcher: ^6.3.1
