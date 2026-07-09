@@ -53,6 +53,8 @@ jobs:
     name: Build Windows exe
     runs-on: windows-latest
     timeout-minutes: 60
+    env:
+      CMAKE_GENERATOR: Visual Studio 17 2022
 
     steps:
       - name: Checkout
