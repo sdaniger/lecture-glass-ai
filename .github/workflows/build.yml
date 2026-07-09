@@ -49,6 +49,16 @@ jobs:
           path: build/app/outputs/flutter-apk/*.apk
           retention-days: 14
 
+      - name: Build APK (release)
+        run: flutter build apk --release
+
+      - name: Upload APK release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lecture-glass-apk-release
+          path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 14
+
   windows-exe:
     name: Build Windows exe
     runs-on: windows-latest
@@ -84,4 +94,14 @@ jobs:
         with:
           name: lecture-glass-windows-debug
           path: build/windows/x64/runner/Debug/
+          retention-days: 14
+
+      - name: Build Windows exe (release)
+        run: flutter build windows
+
+      - name: Upload exe release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lecture-glass-windows-release
+          path: build/windows/x64/runner/Release/
           retention-days: 14
