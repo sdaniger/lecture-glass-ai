@@ -83,5 +83,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: lecture-glass-windows-debug
-          path: build/windows/runner/debug/
+          path: build/windows/x64/runner/Debug/
           retention-days: 14
