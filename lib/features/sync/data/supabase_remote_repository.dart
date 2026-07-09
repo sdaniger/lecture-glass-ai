@@ -31,7 +31,7 @@ class SupabaseRemoteRepository implements RemoteLectureRepository {
       try {
         _client = Supabase.instance.client;
       } catch (_) {
-        await Supabase.initialize(url: url, anonKey: publishableKey);
+        await Supabase.initialize(url: url, publishableKey: publishableKey);
         _client = Supabase.instance.client;
       }
       _connected = true;
