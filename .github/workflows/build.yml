@@ -33,7 +33,16 @@ jobs:
         run: flutter pub get
 
       - name: Analyze
-        run: flutter analyze
+        run: |
+          flutter analyze 2>&1 | tee analysis_log.txt
+          exit ${PIPESTATUS[0]}
+
+      - name: Upload analysis log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-log-android
+          path: analysis_log.txt
 
       - name: Run tests
         run: flutter test
@@ -67,7 +76,16 @@ jobs:
         run: flutter pub get
 
       - name: Analyze
-        run: flutter analyze
+        run: |
+          flutter analyze 2>&1 | tee analysis_log.txt
+          exit ${PIPESTATUS[0]}
+
+      - name: Upload analysis log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-log-windows
+          path: analysis_log.txt
 
       - name: Build Windows exe
         run: flutter build windows --debug
