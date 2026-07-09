@@ -30,15 +30,9 @@ abstract class AiSummaryService {
 class AiSummaryRequest {
   final String lectureTitle;
   final List<ChunkSegment> segments;
-  final String? apiKey;
-  final String? modelName;
-  final String? baseUrl;
 
   const AiSummaryRequest({
     required this.lectureTitle,
     required this.segments,
-    this.apiKey,
-    this.modelName,
-    this.baseUrl,
   });
 }

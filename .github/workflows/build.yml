@@ -105,3 +105,18 @@ jobs:
           name: lecture-glass-windows-release
           path: build/windows/x64/runner/Release/
           retention-days: 14
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" windows\installer.iss'
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lecture-glass-windows-installer
+          path: build/windows/installer/*.exe
+          retention-days: 14

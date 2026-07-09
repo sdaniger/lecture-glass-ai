@@ -44,7 +44,7 @@ class SummaryNotifier extends StateNotifier<SummaryState> {
     }
   }
 
-  Future<void> generateSummary({String? apiKey, String? modelName}) async {
+  Future<void> generateSummary() async {
     state = state.copyWith(
       loadState: SummaryLoadState.generating,
       errorMessage: null,
@@ -75,8 +75,6 @@ class SummaryNotifier extends StateNotifier<SummaryState> {
         AiSummaryRequest(
           lectureTitle: lecture.title,
           segments: chunkSegments,
-          apiKey: apiKey,
-          modelName: modelName,
         ),
       );
 

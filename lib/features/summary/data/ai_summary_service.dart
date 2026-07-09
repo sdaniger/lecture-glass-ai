@@ -1,20 +1,41 @@
 import 'dart:convert';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../../core/errors.dart';
 import '../../../core/logger.dart';
+import '../../settings/data/llm_settings_repository.dart';
+import '../../settings/domain/llm_provider.dart';
+import '../../settings/domain/llm_settings.dart';
 import '../domain/ai_summary_service_interface.dart';
-import '../domain/topic.dart';
 import '../domain/lecture_summary.dart';
+import '../domain/topic.dart';
 
 final aiSummaryServiceProvider = Provider<AiSummaryService>((ref) {
-  return OpenAiSummaryService();
+  return ProviderAwareSummaryService(
+    ref.watch(llmSettingsRepositoryProvider),
+  );
 });
 
-class OpenAiSummaryService implements AiSummaryService {
-  final _dio = Dio();
+class ProviderAwareSummaryService implements AiSummaryService {
+  final LlmSettingsRepository _settingsRepository;
+  final Dio _dio = Dio();
 
-  // Json encode text to avoid escaping issues
+  ProviderAwareSummaryService(this._settingsRepository);
+
+  @override
+  Future<SummaryResult> generateSummary(AiSummaryRequest request) async {
+    final settings = await _settingsRepository.load();
+    AppLogger.i('Generating summary with ${settings.provider.label}');
+
+    return switch (settings.provider) {
+      LlmProvider.gemini => _generateWithGemini(request, settings),
+      LlmProvider.groq || LlmProvider.openRouter || LlmProvider.m365Proxy =>
+        _generateWithOpenAiCompatible(request, settings),
+    };
+  }
+
   String _buildPrompt(String title, List<ChunkSegment> segments) {
     final segmentsJson = segments
         .map((s) => {
@@ -56,62 +77,114 @@ ${jsonEncode(segmentsJson)}
 ''';
   }
 
-  @override
-  Future<SummaryResult> generateSummary(AiSummaryRequest request) async {
-    try {
-      final apiKey = request.apiKey;
-      if (apiKey == null || apiKey.isEmpty) {
-        throw ApiKeyNotSetError();
-      }
-
-      final baseUrl = request.baseUrl ?? 'https://api.openai.com/v1';
-      final model = request.modelName ?? 'gpt-4o-mini';
-
-      final prompt = _buildPrompt(request.lectureTitle, request.segments);
-
-      AppLogger.i('Sending summary request to LLM ($model)...');
-
-      final response = await _dio.post(
-        '$baseUrl/chat/completions',
-        options: Options(headers: {
-          'Authorization': 'Bearer $apiKey',
-          'Content-Type': 'application/json',
-        }),
-        data: {
-          'model': model,
-          'messages': [
-            {
-              'role': 'system',
-              'content':
-                  'You are a precise JSON generator. Always respond with valid JSON only.',
-            },
-            {'role': 'user', 'content': prompt},
-          ],
-          'response_format': {'type': 'json_object'},
-          'temperature': 0.3,
-        },
-      );
-
-      final data = response.data as Map<String, dynamic>;
-      final content = data['choices']?[0]?['message']?['content'] as String?;
-
-      if (content == null || content.isEmpty) {
-        throw AiApiError('APIからの応答が空でした');
-      }
-
-      final parsed = jsonDecode(content) as Map<String, dynamic>;
-
-      return _parseResult(parsed, request.segments);
-    } on DioException catch (e) {
-      AppLogger.e('API request failed', e);
-      throw AiApiError('APIリクエストに失敗しました: ${e.message}');
-    } on FormatException catch (e) {
-      throw JsonParseError('JSONパースに失敗しました: ${e.message}');
+  Future<SummaryResult> _generateWithOpenAiCompatible(
+    AiSummaryRequest request,
+    LlmSettings settings,
+  ) async {
+    final apiKey = settings.apiKey.trim();
+    if (apiKey.isEmpty) {
+      throw const ApiKeyNotSetError();
     }
+
+    final baseUrl = settings.resolvedBaseUrl;
+    final model = settings.resolvedModelName;
+    final prompt = _buildPrompt(request.lectureTitle, request.segments);
+
+    final headers = <String, String>{
+      'Authorization': 'Bearer $apiKey',
+      'Content-Type': 'application/json',
+    };
+
+    if (settings.provider == LlmProvider.openRouter) {
+      headers['HTTP-Referer'] = 'https://lectureglass.local';
+      headers['X-Title'] = 'LectureGlass AI';
+    }
+
+    final response = await _dio.post(
+      '$baseUrl/chat/completions',
+      options: Options(headers: headers),
+      data: {
+        'model': model,
+        'messages': [
+          {
+            'role': 'system',
+            'content':
+                'You are a precise JSON generator. Always respond with valid JSON only.',
+          },
+          {'role': 'user', 'content': prompt},
+        ],
+        'response_format': {'type': 'json_object'},
+        'temperature': 0.3,
+      },
+    );
+
+    final data = response.data as Map<String, dynamic>;
+    final content = data['choices']?[0]?['message']?['content'] as String?;
+    if (content == null || content.isEmpty) {
+      throw const AiApiError('APIからの応答が空でした');
+    }
+
+    return _parseResult(jsonDecode(content) as Map<String, dynamic>);
   }
 
-  SummaryResult _parseResult(
-      Map<String, dynamic> json, List<ChunkSegment> segments) {
+  Future<SummaryResult> _generateWithGemini(
+    AiSummaryRequest request,
+    LlmSettings settings,
+  ) async {
+    final apiKey = settings.apiKey.trim();
+    if (apiKey.isEmpty) {
+      throw const ApiKeyNotSetError();
+    }
+
+    final model = settings.resolvedModelName;
+    final prompt = _buildPrompt(request.lectureTitle, request.segments);
+    final baseUrl = settings.resolvedBaseUrl;
+    final endpoint = '$baseUrl/models/$model:generateContent?key=$apiKey';
+
+    final response = await _dio.post(
+      endpoint,
+      options: Options(headers: const {
+        'Content-Type': 'application/json',
+      }),
+      data: {
+        'contents': [
+          {
+            'role': 'user',
+            'parts': [
+              {'text': prompt},
+            ],
+          },
+        ],
+        'generationConfig': {
+          'temperature': 0.3,
+          'responseMimeType': 'application/json',
+        },
+      },
+    );
+
+    final data = response.data as Map<String, dynamic>;
+    final candidates = data['candidates'] as List<dynamic>? ?? const [];
+    if (candidates.isEmpty) {
+      throw const AiApiError('Geminiからの応答が空でした');
+    }
+
+    final content = candidates.first as Map<String, dynamic>;
+    final parts = ((content['content'] as Map<String, dynamic>?)?['parts']
+            as List<dynamic>?)
+        ?.map((part) => (part as Map<String, dynamic>)['text']?.toString() ?? '')
+        .where((text) => text.isNotEmpty)
+        .toList() ??
+        const [];
+
+    final jsonText = parts.join().trim();
+    if (jsonText.isEmpty) {
+      throw const AiApiError('Gemini応答の本文が空でした');
+    }
+
+    return _parseResult(jsonDecode(jsonText) as Map<String, dynamic>);
+  }
+
+  SummaryResult _parseResult(Map<String, dynamic> json) {
     try {
       final overallSummary =
           json['overall_summary'] as String? ?? '要約を生成できませんでした';
@@ -133,7 +206,7 @@ ${jsonEncode(segmentsJson)}
           keywords: (t['keywords'] as List<dynamic>?)
                   ?.map((e) => e.toString())
                   .toList() ??
-              [],
+              const [],
           createdAt: DateTime.now(),
           updatedAt: DateTime.now(),
         );
@@ -151,8 +224,7 @@ ${jsonEncode(segmentsJson)}
         id: 0,
         lectureId: 0,
         overallSummary: overallSummary,
-        reviewPoints:
-            rawReviewPoints.map((e) => e.toString()).toList(),
+        reviewPoints: rawReviewPoints.map((e) => e.toString()).toList(),
         examPoints: rawExamPoints.map((e) => e.toString()).toList(),
         keywords: keywords,
         createdAt: DateTime.now(),
@@ -162,7 +234,7 @@ ${jsonEncode(segmentsJson)}
       return SummaryResult(summary: summary, topics: topics);
     } catch (e) {
       AppLogger.e('Failed to parse AI response', e);
-      throw JsonParseError('要約結果のパースに失敗しました');
+      throw const JsonParseError('要約結果のパースに失敗しました');
     }
   }
 }

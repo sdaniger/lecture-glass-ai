@@ -1,19 +1,133 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../../../app/theme/app_colors.dart';
 import '../../../../app/theme/app_spacing.dart';
 import '../../../../app/theme/app_typography.dart';
 import '../../../../app/theme/theme_provider.dart';
-import '../../../../shared/widgets/glass_card.dart';
 import '../../../../shared/widgets/glass_button.dart';
+import '../../../../shared/widgets/glass_card.dart';
 import '../../../../shared/widgets/glass_text_field.dart';
 import '../../../../shared/widgets/status_badge.dart';
+import '../../data/llm_settings_repository.dart';
+import '../../domain/llm_provider.dart';
+import '../../domain/llm_settings.dart';
 
-class SettingsPage extends ConsumerWidget {
+class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends ConsumerState<SettingsPage> {
+  final _formKey = GlobalKey<FormState>();
+  final _apiKeyController = TextEditingController();
+  final _modelController = TextEditingController();
+  final _baseUrlController = TextEditingController();
+
+  LlmProvider _provider = LlmProvider.groq;
+  bool _isLoading = true;
+  bool _isSaving = false;
+  String? _errorMessage;
+  String? _successMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_loadSettings);
+  }
+
+  @override
+  void dispose() {
+    _apiKeyController.dispose();
+    _modelController.dispose();
+    _baseUrlController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadSettings() async {
+    final settings = await ref.read(llmSettingsRepositoryProvider).load();
+    if (!mounted) return;
+
+    setState(() {
+      _provider = settings.provider;
+      _apiKeyController.text = settings.apiKey;
+      _modelController.text = settings.modelName;
+      _baseUrlController.text = settings.baseUrl;
+      _isLoading = false;
+    });
+  }
+
+  void _applyProviderPreset(LlmProvider nextProvider) {
+    final previousProvider = _provider;
+    setState(() {
+      _provider = nextProvider;
+
+      if (_modelController.text.trim().isEmpty ||
+          _modelController.text == previousProvider.defaultModel) {
+        _modelController.text = nextProvider.defaultModel;
+      }
+
+      if (_baseUrlController.text.trim().isEmpty ||
+          _baseUrlController.text == previousProvider.defaultBaseUrl) {
+        _baseUrlController.text = nextProvider.defaultBaseUrl;
+      }
+
+      _errorMessage = null;
+      _successMessage = null;
+    });
+  }
+
+  Future<void> _saveSettings() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() {
+      _isSaving = true;
+      _errorMessage = null;
+      _successMessage = null;
+    });
+
+    try {
+      final settings = LlmSettings(
+        provider: _provider,
+        apiKey: _apiKeyController.text.trim(),
+        modelName: _modelController.text.trim(),
+        baseUrl: _baseUrlController.text.trim(),
+      );
+      await ref.read(llmSettingsRepositoryProvider).save(settings);
+
+      if (!mounted) return;
+      setState(() {
+        _successMessage = '設定を保存しました';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = '設定の保存に失敗しました: $e';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+      }
+    }
+  }
+
+  void _resetToDefaults() {
+    setState(() {
+      _provider = LlmProvider.groq;
+      _apiKeyController.clear();
+      _modelController.text = LlmProvider.groq.defaultModel;
+      _baseUrlController.text = LlmProvider.groq.defaultBaseUrl;
+      _errorMessage = null;
+      _successMessage = null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final themeMode = ref.watch(themeModeProvider);
 
     return SingleChildScrollView(
@@ -25,37 +139,164 @@ class SettingsPage extends ConsumerWidget {
           Text('設定', style: AppTypography.displayMedium),
           const SizedBox(height: AppSpacing.lg),
 
-          // LLM API Settings
           _SectionHeader(title: 'AI API設定', icon: Icons.api_rounded),
           const SizedBox(height: AppSpacing.sm),
           GlassCard(
             padding: const EdgeInsets.all(AppSpacing.md),
-            child: Column(
-              children: [
-                GlassTextField(
-                  hintText: 'sk-...',
-                  labelText: 'APIキー',
-                  prefixIcon: Icons.key_rounded,
-                  obscureText: true,
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                GlassTextField(
-                  hintText: 'gpt-4o-mini',
-                  labelText: 'モデル名',
-                  prefixIcon: Icons.smart_toy_rounded,
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                GlassTextField(
-                  hintText: 'https://api.openai.com/v1',
-                  labelText: 'APIベースURL',
-                  prefixIcon: Icons.link_rounded,
-                ),
-              ],
-            ),
+            child: _isLoading
+                ? const SizedBox(
+                    height: 160,
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                : Form(
+                    key: _formKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        DropdownButtonFormField<LlmProvider>(
+                          value: _provider,
+                          decoration: const InputDecoration(
+                            labelText: 'APIプロバイダ',
+                          ),
+                          items: LlmProvider.values
+                              .map(
+                                (provider) => DropdownMenuItem(
+                                  value: provider,
+                                  child: Text(provider.label),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (provider) {
+                            if (provider == null) return;
+                            _applyProviderPreset(provider);
+                          },
+                        ),
+                        const SizedBox(height: AppSpacing.xs),
+                        Text(
+                          _provider.description,
+                          style: AppTypography.bodySmall.copyWith(
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        GlassTextField(
+                          controller: _apiKeyController,
+                          hintText: _provider == LlmProvider.gemini
+                              ? 'AIza...'
+                              : 'sk-...',
+                          labelText: 'APIキー',
+                          prefixIcon: Icons.key_rounded,
+                          obscureText: true,
+                          validator: (value) {
+                            if (value == null || value.trim().isEmpty) {
+                              return 'APIキーを入力してください';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        GlassTextField(
+                          controller: _modelController,
+                          hintText: _provider.defaultModel,
+                          labelText: 'モデル名',
+                          prefixIcon: Icons.smart_toy_rounded,
+                          validator: (value) {
+                            if (value == null || value.trim().isEmpty) {
+                              return 'モデル名を入力してください';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        GlassTextField(
+                          controller: _baseUrlController,
+                          hintText: _provider.defaultBaseUrl,
+                          labelText: 'APIベースURL',
+                          prefixIcon: Icons.link_rounded,
+                          validator: (value) {
+                            if (_provider == LlmProvider.m365Proxy &&
+                                (value == null || value.trim().isEmpty)) {
+                              return 'M365 Proxy のベースURLを入力してください';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        GlassCard(
+                          padding: const EdgeInsets.all(AppSpacing.sm),
+                          color: AppColors.surfaceGlass.withValues(alpha: 0.6),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(
+                                _provider.isGemini
+                                    ? Icons.auto_awesome_rounded
+                                    : Icons.cloud_rounded,
+                                size: 18,
+                                color: AppColors.primary,
+                              ),
+                              const SizedBox(width: AppSpacing.sm),
+                              Expanded(
+                                child: Text(
+                                  _provider.isGemini
+                                      ? 'Gemini は Google の生成APIを直接利用します。JSONで返すように強制しています。'
+                                      : 'Groq / OpenRouter / M365 Proxy は OpenAI互換の chat/completions を使います。',
+                                  style: AppTypography.bodySmall.copyWith(
+                                    color: AppColors.textSecondary,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: AppSpacing.md),
+                        if (_errorMessage != null)
+                          Padding(
+                            padding:
+                                const EdgeInsets.only(bottom: AppSpacing.sm),
+                            child: Text(
+                              _errorMessage!,
+                              style: AppTypography.bodySmall.copyWith(
+                                color: AppColors.error,
+                              ),
+                            ),
+                          ),
+                        if (_successMessage != null)
+                          Padding(
+                            padding:
+                                const EdgeInsets.only(bottom: AppSpacing.sm),
+                            child: Text(
+                              _successMessage!,
+                              style: AppTypography.bodySmall.copyWith(
+                                color: AppColors.primary,
+                              ),
+                            ),
+                          ),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: GlassButton(
+                                label: _isSaving ? '保存中...' : '保存',
+                                icon: _isSaving ? null : Icons.save_rounded,
+                                onPressed: _isSaving ? null : _saveSettings,
+                              ),
+                            ),
+                            const SizedBox(width: AppSpacing.sm),
+                            GlassButton(
+                              label: '初期値に戻す',
+                              icon: Icons.restart_alt_rounded,
+                              onPressed: _isSaving ? null : _resetToDefaults,
+                              backgroundColor:
+                                  AppColors.surfaceGlass.withValues(alpha: 0.6),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
           ),
           const SizedBox(height: AppSpacing.lg),
 
-          // Whisper Settings
           _SectionHeader(title: 'Whisper設定', icon: Icons.transcribe_rounded),
           const SizedBox(height: AppSpacing.sm),
           GlassCard(
@@ -89,7 +330,6 @@ class SettingsPage extends ConsumerWidget {
           ),
           const SizedBox(height: AppSpacing.lg),
 
-          // Theme Settings
           _SectionHeader(title: 'テーマ', icon: Icons.palette_rounded),
           const SizedBox(height: AppSpacing.sm),
           GlassCard(
@@ -118,7 +358,6 @@ class SettingsPage extends ConsumerWidget {
           ),
           const SizedBox(height: AppSpacing.lg),
 
-          // Data Management
           _SectionHeader(title: 'データ管理', icon: Icons.storage_rounded),
           const SizedBox(height: AppSpacing.sm),
           GlassCard(
@@ -150,7 +389,6 @@ class SettingsPage extends ConsumerWidget {
           ),
           const SizedBox(height: AppSpacing.lg),
 
-          // App Info
           _SectionHeader(title: 'アプリ情報', icon: Icons.info_outline),
           const SizedBox(height: AppSpacing.sm),
           GlassCard(
@@ -203,9 +441,12 @@ class _DataRow extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: AppTypography.bodyMedium.copyWith(
-            color: AppColors.textSecondary,
-          )),
+          Text(
+            label,
+            style: AppTypography.bodyMedium.copyWith(
+              color: AppColors.textSecondary,
+            ),
+          ),
           Text(value, style: AppTypography.bodyMedium),
         ],
       ),
